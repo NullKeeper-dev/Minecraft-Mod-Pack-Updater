@@ -1,6 +1,7 @@
 # Minecraft Mod Updater
 
 Automatically update all your mods to a newer version via Modrinth
+
 No need to manually redownload your mods ever again.
 
 ## Project Overview
