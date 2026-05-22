@@ -106,7 +106,9 @@ pyinstaller --onefile --console --name "MinecraftModUpdater" --add-data "version
 Build output:
 
 - The executable will be created at `dist\MinecraftModUpdater.exe`
-- `version.txt` is bundled by the `--add-data "version.txt;."` argument
+- `version.txt` is bundled inside the onefile executable by the `--add-data "version.txt;."` argument
+- You should not expect a separate `dist\version.txt` file when using `--onefile`
+- After a self-update, the app may write a new `version.txt` next to the `.exe`
 
 Optional clean rebuild:
 

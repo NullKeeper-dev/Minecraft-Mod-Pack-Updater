@@ -30,11 +30,17 @@ def get_version_file() -> Path:
     return get_app_dir() / VERSION_FILENAME
 
 
+def get_embedded_version_file() -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / VERSION_FILENAME
+    return Path(__file__).resolve().parent / VERSION_FILENAME
+
+
 def get_local_version() -> str:
-    """Read the local version from version.txt. Defaults to 0.0.0 if missing."""
-    version_file = get_version_file()
-    if version_file.exists():
-        return version_file.read_text(encoding="utf-8").strip()
+    """Read the local version, preferring an external file over the bundled one."""
+    for version_file in (get_version_file(), get_embedded_version_file()):
+        if version_file.exists():
+            return version_file.read_text(encoding="utf-8").strip()
     return "0.0.0"
 
 
