@@ -1,11 +1,7 @@
 # Minecraft Mod Updater
 
-Windows console application that migrates a Minecraft mod folder to a new game
-version by identifying existing mods with SHA-512 hashes, resolving updated
-files from Modrinth, and downloading the latest compatible jars into a target
-folder.
-
-Created by NullKeeper-dev.
+Automatically update all your mods to a newer version via Modrinth
+No need to manually redownload your mods ever again.
 
 ## Project Overview
 
@@ -13,18 +9,6 @@ Created by NullKeeper-dev.
 - Platform: Windows
 - Packaging target: standalone `.exe` via PyInstaller
 - UI: Rich-powered color console
-
-## Feature Summary
-
-- Rich banner, prompts, progress bar, panels, and summary tables
-- Validated source and destination folder prompts
-- Auto-create destination directory on confirmation
-- Minecraft version selection by direct validated input against a static release set
-- Loader selection for Fabric, Forge, NeoForge, and Quilt
-- Hash-first mod identification with name-search fallback
-- Sequential download with visible progress
-- Summary table and `mod_update_log.txt` output
-- GitHub release update check on launch
 
 ## Getting Started
 
@@ -117,16 +101,6 @@ rmdir /s /q build
 rmdir /s /q dist
 del MinecraftModUpdater.spec
 ```
-
-## Output Files
-
-`mod_update_log.txt` is written into the destination folder after processing.
-It contains:
-
-- Target Minecraft version
-- Selected loader
-- Successful source filenames
-- Failed source filenames
 
 ## Future Enhancements
 
