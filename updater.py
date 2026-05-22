@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 import requests
 from rich.console import Console
 from rich.prompt import Confirm
+from rich.text import Text
 
 GITHUB_REPO = "NullKeeper-dev/Minecraft-Mod-Updater"
 RELEASES_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -18,6 +19,7 @@ REQUEST_HEADERS = {
     "User-Agent": "MinecraftModUpdater/1.0.0 (github.com/NullKeeper-dev/Minecraft-Mod-Updater)",
 }
 VERSION_FILENAME = "version.txt"
+PREFERRED_RELEASE_SUFFIXES = (".zip", ".rar", ".7z", ".exe")
 
 
 def get_app_dir() -> Path:
@@ -58,15 +60,7 @@ def get_latest_release() -> tuple:
         if resp.status_code == 200:
             data = resp.json()
             tag = data.get("tag_name", "").lstrip("v")
-            assets = data.get("assets", [])
-            # Prefer a .zip asset, then .exe, then fallback to zipball
-            for asset in assets:
-                if asset["name"].endswith(".zip"):
-                    return tag, asset["browser_download_url"]
-            for asset in assets:
-                if asset["name"].endswith(".exe"):
-                    return tag, asset["browser_download_url"]
-            return tag, data.get("zipball_url")
+            return tag, _select_release_download_url(data)
     except requests.RequestException:
         pass
     return None, None
@@ -94,23 +88,35 @@ def check_for_updates(console: Console) -> None:
 
     if _version_tuple(remote_ver) > _version_tuple(local_ver):
         console.print(
-            f"[bold yellow]Update available.[/bold yellow] "
-            f"Current: [red]v{local_ver}[/red]  ->  Latest: [green]v{remote_ver}[/green]"
+            Text.assemble(
+                ("Update available. ", "bold yellow"),
+                ("Current: ", ""),
+                (f"v{local_ver}", "red"),
+                ("  ->  Latest: ", ""),
+                (f"v{remote_ver}", "green"),
+            )
         )
         if Confirm.ask("[bold]Download and install the update now?[/bold]", default=False):
             _apply_update(console, download_url, remote_ver)
         else:
             console.print("[dim]Skipping update; continuing with current version.[/dim]")
     else:
-        console.print(f"[green][OK][/green] Up to date [dim](v{local_ver})[/dim]")
+        console.print(
+            Text.assemble(
+                ("[OK] ", "green"),
+                ("Up to date ", ""),
+                (f"(v{local_ver})", "dim"),
+            )
+        )
 
 
 def _apply_update(console: Console, url: str, new_version: str) -> None:
     """Download the latest release package and apply it next to the running app."""
     console.print("[cyan]Downloading update...[/cyan]")
     tmp_path: Path | None = None
+    staging_dir: Path | None = None
     try:
-        suffix = Path(urlparse(url).path).suffix or ".tmp"
+        suffix = (Path(urlparse(url).path).suffix or ".tmp").lower()
         resp = requests.get(url, stream=True, timeout=60, headers=REQUEST_HEADERS)
         resp.raise_for_status()
 
@@ -121,15 +127,22 @@ def _apply_update(console: Console, url: str, new_version: str) -> None:
             tmp_path = Path(tmp.name)
 
         extract_dir = get_app_dir()
-        if zipfile.is_zipfile(tmp_path):
-            _extract_archive(tmp_path, extract_dir)
+        if _is_archive_package(tmp_path):
+            if getattr(sys, "frozen", False):
+                staging_dir = Path(tempfile.mkdtemp(prefix="mmu-update-"))
+                _extract_release_archive(tmp_path, staging_dir)
+                (staging_dir / VERSION_FILENAME).write_text(f"{new_version}\n", encoding="utf-8")
+                _stage_directory_update(staging_dir, extract_dir)
+                staging_dir = None
+            else:
+                _extract_release_archive(tmp_path, extract_dir)
+                get_version_file().write_text(f"{new_version}\n", encoding="utf-8")
         elif _is_executable_package(tmp_path):
             _stage_executable_update(tmp_path, extract_dir)
             tmp_path = None
+            get_version_file().write_text(f"{new_version}\n", encoding="utf-8")
         else:
-            raise ValueError("Release asset is not a supported zip or executable package.")
-
-        get_version_file().write_text(f"{new_version}\n", encoding="utf-8")
+            raise ValueError("Release asset is not a supported archive or executable package.")
 
         console.print(
             f"[bold green][OK] Updated to v{new_version}.[/bold green] "
@@ -143,9 +156,35 @@ def _apply_update(console: Console, url: str, new_version: str) -> None:
     finally:
         if tmp_path and tmp_path.exists():
             tmp_path.unlink()
+        if staging_dir and staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
 
 
-def _extract_archive(archive_path: Path, extract_dir: Path) -> None:
+def _select_release_download_url(release_data: dict) -> str | None:
+    assets = release_data.get("assets", [])
+    for suffix in PREFERRED_RELEASE_SUFFIXES:
+        for asset in assets:
+            name = asset.get("name", "").lower()
+            if name.endswith(suffix):
+                return asset.get("browser_download_url")
+
+    if assets:
+        return assets[0].get("browser_download_url")
+    return release_data.get("zipball_url")
+
+
+def _is_archive_package(download_path: Path) -> bool:
+    return zipfile.is_zipfile(download_path) or download_path.suffix.lower() in {".rar", ".7z"}
+
+
+def _extract_release_archive(archive_path: Path, extract_dir: Path) -> None:
+    if zipfile.is_zipfile(archive_path):
+        _extract_zip_archive(archive_path, extract_dir)
+        return
+    _extract_external_archive(archive_path, extract_dir)
+
+
+def _extract_zip_archive(archive_path: Path, extract_dir: Path) -> None:
     with zipfile.ZipFile(archive_path, "r") as archive:
         files = [member for member in archive.infolist() if not member.is_dir()]
         root_prefix = _common_root_prefix(files)
@@ -160,6 +199,33 @@ def _extract_archive(archive_path: Path, extract_dir: Path) -> None:
             target_path.parent.mkdir(parents=True, exist_ok=True)
             with archive.open(member) as source, target_path.open("wb") as target:
                 shutil.copyfileobj(source, target)
+
+
+def _extract_external_archive(archive_path: Path, extract_dir: Path) -> None:
+    extract_dir.mkdir(parents=True, exist_ok=True)
+
+    commands = [
+        ["tar", "-xf", str(archive_path), "-C", str(extract_dir)],
+        ["7z", "x", str(archive_path), f"-o{extract_dir}", "-y"],
+    ]
+    errors: list[str] = []
+
+    for command in commands:
+        try:
+            subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return
+        except FileNotFoundError:
+            errors.append(f"{command[0]} not found")
+        except subprocess.CalledProcessError as exc:
+            message = exc.stderr.strip() or exc.stdout.strip() or f"exit code {exc.returncode}"
+            errors.append(f"{command[0]} failed: {message}")
+
+    raise ValueError("Could not extract release archive. " + " | ".join(errors))
 
 
 def _common_root_prefix(members: list[zipfile.ZipInfo]) -> str | None:
@@ -217,6 +283,38 @@ def _stage_executable_update(download_path: Path, app_dir: Path) -> None:
                 "  goto retry",
                 ")",
                 f'start "" "{current_exe}"',
+                'del "%~f0"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess.Popen(
+        ["cmd", "/c", str(batch_path)],
+        creationflags=creation_flags,
+    )
+
+
+def _stage_directory_update(staging_dir: Path, app_dir: Path) -> None:
+    if not getattr(sys, "frozen", False):
+        raise ValueError("Directory updates are only supported in the packaged .exe build.")
+
+    current_exe = Path(sys.executable).resolve()
+    batch_path = app_dir / "_apply_update.bat"
+    batch_path.write_text(
+        "\n".join(
+            [
+                "@echo off",
+                ":retry",
+                f'xcopy /E /I /Y "{staging_dir}\\*" "{app_dir}\\" >nul',
+                "if errorlevel 1 (",
+                "  timeout /t 1 /nobreak >nul",
+                "  goto retry",
+                ")",
+                f'start "" "{current_exe}"',
+                f'rmdir /s /q "{staging_dir}"',
                 'del "%~f0"',
                 "",
             ]

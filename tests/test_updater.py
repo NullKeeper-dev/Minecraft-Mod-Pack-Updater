@@ -30,6 +30,37 @@ class UpdaterVersionTests(unittest.TestCase):
                 with patch.object(updater, "get_embedded_version_file", return_value=embedded):
                     self.assertEqual(updater.get_local_version(), "1.0.0")
 
+    def test_select_release_download_url_prefers_supported_assets(self) -> None:
+        release_data = {
+            "assets": [
+                {
+                    "name": "notes.txt",
+                    "browser_download_url": "https://example.com/notes.txt",
+                },
+                {
+                    "name": "MCModUpdater.V1.0.0.rar",
+                    "browser_download_url": "https://example.com/release.rar",
+                },
+            ],
+            "zipball_url": "https://example.com/source.zip",
+        }
+
+        self.assertEqual(
+            updater._select_release_download_url(release_data),
+            "https://example.com/release.rar",
+        )
+
+    def test_select_release_download_url_falls_back_to_zipball(self) -> None:
+        release_data = {
+            "assets": [],
+            "zipball_url": "https://example.com/source.zip",
+        }
+
+        self.assertEqual(
+            updater._select_release_download_url(release_data),
+            "https://example.com/source.zip",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
